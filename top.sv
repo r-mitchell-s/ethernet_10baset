@@ -7,8 +7,8 @@ The two outputs from the module are a differential pair (o_pos and o_neg) that c
 */
 
 module top(
-	input i_clk,
-	output o_pos, o_neg);
+	input logic i_clk,
+	output logic o_pos, o_neg);
 
 	// IP address of the source (in this case the FPGA)
 	parameter ip_src1 = ;
@@ -175,14 +175,83 @@ module top(
 	// create a counter to track the duration of the packet transmission
 	reg [3:0] shift_count;
 	
-	// 
-	send_pkt;
+	// indicates whether a packet is currently in transmission
+	reg send_pkt;
 
-	// 
+	/
+
+	// shifcount incrememts while pkt transmits, 
 	always @(posedge i_clk) begin
-		// if start signal is on, 
+
+		// if start signal is on, indicate transmission
 		if (start_send)
 			send_pkt <= 1;
+
+		// when we reach the end of the ethernet packet, deassert the send_pkt signal
 		else if (shift_count == 14 && read_addr == 7'h48)
 			send_pkt <= 0;
+
+		// if there is a transmission we increment shift count, otherwise it rests at 15
+		shift_count <= send_pkt ? shift_count + 1 : 15;
+	end
+
+	// read_ram is asserted whenever a new byte needs to be loaded from memory
+	wire read_ram;
+	assign read_ram = (shift_count == 15); 
+
+	// 
+	reg [7:0] shift_data;
+	
+	// 
+	always @(posedge clk) begin
+		if (shift_count[0]) shift_data <= read_ram ? pkt_data : {1'b0, shift_data[7:1]};
+	end
+
+	// CRC generation and control signals
+	reg [31:0] crc;
+	reg crc_flush;
+	reg crc_init;
+	wire crc_input;
+
+	// flush control logic
+	always @(posedge clk) begin
+		
+		// if flush starts, keep flushing until end of transmission
+		if (crc_flush)
+			crc_flush <= send_pkt;
+		
+		// only flush on read_ram if the packet has ended
+		else if (read_ram)
+			crc_flush <= (read_addr == 7'h44);
+
+		// 
+		if (read_ram)
+			crc_init <= (read_addr == 7);
+
+		// update the crc at posedge of shift_count[0], all 1's if being initialized, else shift crc left and update the code
+		if (shift_count[0])
+			crc <= crc_init ? ~0 : ({crc[30:0], 1'b0} ^ ({32{CRCinput}} & 32'h04C11DB7));
+	end
+
+	// logic to determine crc input bit
+	crc_input = crc_flush ?  0 : (shift_data[0] ^ crc[31]);
+
+	// NLP
+	reg [17:0] lpc;
+	reg link_pulse;
+
+	// network link pulse generation to ensure the connection is maintained when packets are not being sent
+	always @(posedge clk) begin
+
+		// when packet sends, no link pulse, otherwise increment the link pulse counter
+		lpc <= send_pkt ? 0 : lpc + 1;
+
+		// generates a link pulse upon overflow
+		link_pulse <= &lpc[17:1];
+	end 
+
+	// data transmission
+	reg send_pkt_data;
+	reg [2:0] idle_count;
+	wire data_out
 endmodule
