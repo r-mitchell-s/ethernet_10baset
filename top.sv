@@ -305,11 +305,9 @@ module top_tb;
   );
 
   initial begin
-
 	$dumpvars(0, uut);
     // Run the simulation for some time to observe the behavior
     #100000; // Adjust the time as needed to observe the transmission
     $finish;
   end
-
 endmodule
