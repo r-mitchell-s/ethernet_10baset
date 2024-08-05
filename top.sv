@@ -11,24 +11,24 @@ module top(
 	output logic o_pos, o_neg);
 
 	// IP address of the source (in this case the FPGA)
-	parameter ip_src1 = ;
-	parameter ip_src2 = ;
-	parameter ip_src3 = ;
-	parameter ip_src4 = ;
+	parameter ip_src1 = 8'hC0;
+	parameter ip_src2 = 8'hA8;
+	parameter ip_src3 = 8'h01;
+	parameter ip_src4 = 8'h01;
 
 	// IP address of the client PC receiving the packet
-	parameter ip_dst1 = ;
-	parameter ip_dst2 = ;
-	parameter ip_dst3 = ;
-	parameter ip_dst4 = ;
+	parameter ip_dst1 = 8'hC0;
+	parameter ip_dst2 = 8'hA8;
+	parameter ip_dst3 = 8'h01;
+	parameter ip_dst4 = 8'h02;
 
 	// The physical address of the PC receiving the packet
-	parameter phys_addr1 = ;
-	parameter phys_addr2 = ;
-	parameter phys_addr3 = ;
-	parameter phys_addr4 = ;
-	parameter phys_addr5 = ;
-	parameter phys_addr6 = ;
+	parameter phys_addr1 = 8'h00;
+	parameter phys_addr2 = 8'h11;
+	parameter phys_addr3 = 8'h22;
+	parameter phys_addr4 = 8'h33;
+	parameter phys_addr5 = 8'h44;
+	parameter phys_addr6 = 8'h55;
 
 	// clock divider implementation to enable a packet send roughly once per second
 	reg [23:0] counter;
@@ -178,8 +178,6 @@ module top(
 	// indicates whether a packet is currently in transmission
 	reg send_pkt;
 
-	/
-
 	// shifcount incrememts while pkt transmits, 
 	always @(posedge i_clk) begin
 
@@ -203,7 +201,7 @@ module top(
 	reg [7:0] shift_data;
 	
 	// 
-	always @(posedge clk) begin
+	always @(posedge i_clk) begin
 		if (shift_count[0]) shift_data <= read_ram ? pkt_data : {1'b0, shift_data[7:1]};
 	end
 
@@ -214,7 +212,7 @@ module top(
 	wire crc_input;
 
 	// flush control logic
-	always @(posedge clk) begin
+	always @(posedge i_clk) begin
 		
 		// if flush starts, keep flushing until end of transmission
 		if (crc_flush)
@@ -230,18 +228,18 @@ module top(
 
 		// update the crc at posedge of shift_count[0], all 1's if being initialized, else shift crc left and update the code
 		if (shift_count[0])
-			crc <= crc_init ? ~0 : ({crc[30:0], 1'b0} ^ ({32{CRCinput}} & 32'h04C11DB7));
+			crc <= crc_init ? ~0 : ({crc[30:0], 1'b0} ^ ({32{crc_input}} & 32'h04C11DB7));
 	end
 
 	// logic to determine crc input bit
-	crc_input = crc_flush ?  0 : (shift_data[0] ^ crc[31]);
+	assign crc_input = crc_flush ?  0 : (shift_data[0] ^ crc[31]);
 
 	// NLP
 	reg [17:0] lpc;
 	reg link_pulse;
 
 	// network link pulse generation to ensure the connection is maintained when packets are not being sent
-	always @(posedge clk) begin
+	always @(posedge i_clk) begin
 
 		// when packet sends, no link pulse, otherwise increment the link pulse counter
 		lpc <= send_pkt ? 0 : lpc + 1;
@@ -251,7 +249,67 @@ module top(
 	end 
 
 	// data transmission
-	reg send_pkt_data;
+	reg send_pkt_data, qo, qoe;
 	reg [2:0] idle_count;
-	wire data_out
+	wire data_out;
+
+	// 
+	always @(posedge i_clk) begin
+
+		// double-clocking?
+		send_pkt_data <= send_pkt;
+
+		// if a transmission is underway then not idle
+		if (send_pkt_data)
+			idle_count <= 0;
+		
+		// if all of idle count is 0, then start counting
+		else if (~&idle_count)
+			idle_count <= idle_count + 1;
+	end
+
+	// assign the data_out
+	assign data_out = crc_flush ? ~crc[31] : shift_data[0];
+	 
+	// final output assignment and output enable
+	always @(posedge i_clk) begin
+
+		// enable signals
+		qo <= send_pkt_data ? ~data_out^shift_count[0] : 1;
+		qoe <= send_pkt_data | link_pulse | (idle_count < 6);
+
+		// output assignment
+		o_neg <= qoe ? ~qo : 1'b0;
+		o_pos <= qoe ? qo : 1'b0;
+	end
+endmodule
+
+module top_tb;
+
+  // Testbench signals
+  reg clk;
+  wire o_pos;
+  wire o_neg;
+
+  // Clock generation
+  initial begin
+    clk = 0;
+    forever #25 clk = ~clk; // 20 MHz clock (50 ns period)
+  end
+
+  // Instantiate the top module
+  top uut (
+    .i_clk(clk),
+    .o_pos(o_pos),
+    .o_neg(o_neg)
+  );
+
+  initial begin
+
+	$dumpvars(0, uut);
+    // Run the simulation for some time to observe the behavior
+    #100000; // Adjust the time as needed to observe the transmission
+    $finish;
+  end
+
 endmodule
